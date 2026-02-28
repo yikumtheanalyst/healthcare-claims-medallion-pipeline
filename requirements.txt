@@ -1,0 +1,6 @@
+pyspark
+pandas
+numpy
+faker
+openpyxl
+delta-spark
