@@ -1,15 +1,6 @@
-<<<<<<< HEAD
 pyspark
 pandas
 numpy
 faker
 openpyxl
-=======
-install when necessary
-pyspark
-pandas
-numpy
-faker
-openpyxl
->>>>>>> 2525877 (Resolved merge confilict)
 delta-spark
