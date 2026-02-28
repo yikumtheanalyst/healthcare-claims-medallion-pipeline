@@ -4,7 +4,7 @@
 
 End-to-end | claims data platform built using Medallion Architecture (Bronze → Silver → Gold) in Databricks.
 
-This project generates realistic synthetic Medicaid medical claims using real-world ICD-10, CPT/HCPCS, Revenue Code, and Place of Service reference tables and produces a dimensional star schema ready for Power BI analytics.
+This project generates realistic synthetic Healthcare medical claims using real-world ICD-10, CPT/HCPCS, Revenue Code, and Place of Service reference tables and produces a dimensional star schema ready for Power BI analytics.
 
 ---
 
