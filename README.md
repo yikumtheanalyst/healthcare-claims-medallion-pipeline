@@ -8,6 +8,7 @@ This project generates realistic synthetic Healthcare medical claims using real-
 
 ---
 
+
 ## Architecture
 
 ### Bronze Layer
@@ -64,6 +65,8 @@ Databricks job executes:
 
 - Databricks
 - PySpark
+- Python
+- SQL
 - Delta Lake
 - Medallion Architecture
 - Dimensional Modeling
@@ -89,19 +92,25 @@ In production environments, raw data would reside in cloud storage (e.g., Databr
 - Data quality framework implementation
 - Star schema dimensional modeling
 
+
 ---
+
 ## Downstream Analytics Layer
 
 A Power BI executive dashboard is currently being built on top of the Gold star schema to demonstrate business-ready reporting, KPI modeling, and healthcare utilization insights.
 
 The report will showcase:
+- Total Encounters
 - Total cost & allowed amounts
 - Utilization trends
 - Diagnosis and procedure distribution
 - Provider performance metrics
 - Claims volume by service type
+- Denied and Approved Claims
+
 
 This repository focuses on the data engineering architecture; the analytics layer will be published separately.
+
 ---
 
 ## Author
