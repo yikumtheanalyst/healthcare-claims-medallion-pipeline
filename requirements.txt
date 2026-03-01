@@ -1,6 +1,7 @@
 pyspark
 pandas
 numpy
+xlrd
 faker
 openpyxl
 delta-spark
