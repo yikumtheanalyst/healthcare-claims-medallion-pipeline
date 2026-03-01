@@ -1,0 +1,4 @@
+patient_id,first_name,last_name,dob,age,gender,ethnicity,insurance_type,marital_status,address,city,state,zip,phone,email,registration_date
+PAT000001,Danielle,Johnson,14-05-1940,85,Female,Asian,UHC,Married,32181 Johnson Course Apt. 389,Bakersfield,CA,93301,,danielle.johnson40@example.com,3/1/2025
+PAT000002,Anna,Baldwin,4/3/2010,15,Female,White,Aetna,Married,79402 Peterson Drives Apt. 511,Bakersfield,CA,93301,(615)759 407,anna.baldwin294@example.com,26-02-2025
+PAT000003,James,Jones,31-03-2021,4,Male,White,UHC,Married,1316 Chavez Village,Portland,OR,97035,(925)853 419,james.jones377@example.com,27-01-2025
