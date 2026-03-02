@@ -79,15 +79,15 @@ process_run_id = dbutils.widgets.get("process_run_id").strip().lower()
 write_mode = dbutils.widgets.get("write_mode").strip().lower()
 
 # Bronze tables
-bronze_claims_table  = f"{src_catalog}.{src_schema}.claims_raw"
-bronze_icd10_table   = f"{src_catalog}.{src_schema}.ref_icd10_diagnosis"
-bronze_hcpcs_table   = f"{src_catalog}.{src_schema}.ref_hcpcs"
-bronze_rev_table     = f"{src_catalog}.{src_schema}.ref_revenue_codes"
-bronze_pos_table     = f"{src_catalog}.{src_schema}.ref_place_of_service"
-bronze_plans_table          = f"{src_catalog}.{src_schema}.health_plans_raw"
-bronze_members_table        = f"{src_catalog}.{src_schema}.members_raw"
-bronze_providers_table    = f"{src_catalog}.{src_schema}.providers_raw"
-bronze_pharmacies_table     = f"{src_catalog}.{src_schema}.pharmacies_raw"
+bronze_claims_table     = f"{src_catalog}.{src_schema}.claims_raw"
+bronze_icd10_table      = f"{src_catalog}.{src_schema}.ref_icd10_diagnosis"
+bronze_hcpcs_table      = f"{src_catalog}.{src_schema}.ref_hcpcs"
+bronze_rev_table        = f"{src_catalog}.{src_schema}.ref_revenue_codes"
+bronze_pos_table        = f"{src_catalog}.{src_schema}.ref_place_of_service"
+bronze_plans_table      = f"{src_catalog}.{src_schema}.health_plans_raw"
+bronze_members_table    = f"{src_catalog}.{src_schema}.members_raw"
+bronze_providers_table  = f"{src_catalog}.{src_schema}.providers_raw"
+bronze_pharmacies_table = f"{src_catalog}.{src_schema}.pharmacies_raw"
 
 # Silver tables (clean entities)
 silver_claims_table      = f"{dst_catalog}.{dst_schema}.claims_clean"
@@ -468,8 +468,3 @@ print(f"silver_claims_rejected_this_run = {rows_rejected}")
       .orderBy(F.col("end_time").desc())
       .limit(50)
       .display())
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Final Validation of duplicate claim ids

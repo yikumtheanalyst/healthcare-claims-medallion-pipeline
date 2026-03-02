@@ -97,7 +97,7 @@ healthcare_claims.write \
 rows_read = healthcare_claims .count()
 
 print(f"Rows Read from Source: {rows_read}")
-display(healthcare_claims.limit(5))
+# display(healthcare_claims.limit(5))
 
 # COMMAND ----------
 
@@ -422,7 +422,7 @@ ref_start = datetime.now()
 try:
     pdf_rev = pd.read_excel(
         REFERENCE_FILE,
-        sheet_name="ref_icd10_diagnosis",
+        sheet_name="ref_revenue_codes",
         names=["CODE", "DESCRIPTION"]
     )
     rows_read = len(pdf_rev)
@@ -451,13 +451,13 @@ rows_written = 0
 ref_start = datetime.now()
 
 try:
-    df_pos = (spark.read.format("csv")
-              .option("header", "true")
-              .option("inferSchema", "false")
-              .schema("Place_of_Service_Code STRING, Place_of_Service_Name STRING, Place_of_Service_Description STRING")
-              .option("sheetName", "Place of Services")
-              .load(REFERENCE_FILE))
-
+    df_pos = spark.createDataFrame(pd.read_excel(REFERENCE_FILE,
+                                       sheet_name='Place of Services',
+                                       names=["Place_of_Service_Code", "Place_of_Service_Name", "Place_of_Service_Description"],
+                                       dtype={"Place_of_Service_Code": "string", "Place_of_Service_Name": "string", "Place_of_Service_Description": "string"}
+                                       )
+                         )
+        
     rows_read = df_pos.count()
 
     df_pos_bronze = (df_pos

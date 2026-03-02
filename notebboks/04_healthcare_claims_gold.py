@@ -80,7 +80,7 @@ write_mode = dbutils.widgets.get("write_mode").strip().lower()
 # Silver source tables
 silver_claims_table    = f"{src_catalog}.{src_schema}.claims_clean"
 silver_claims_rejects  = f"{src_catalog}.{src_schema}.claims_rejects"
-silver_icd10_table     = f"{src_catalog}.{src_schema}.ref_icd10_diagnosis"
+silver_diagnosis_table     = f"{src_catalog}.{src_schema}.ref_icd10_diagnosis"
 silver_hcpcs_table     = f"{src_catalog}.{src_schema}.ref_hcpcs"
 silver_rev_table       = f"{src_catalog}.{src_schema}.ref_revenue_codes"
 silver_pos_table       = f"{src_catalog}.{src_schema}.ref_place_of_service"
@@ -91,16 +91,15 @@ silver_providers_table      = f"{src_catalog}.{src_schema}.providers"
 silver_pharmacies_table     = f"{src_catalog}.{src_schema}.pharmacies"
 
 # Gold star schema tables
-gold_fact_claims       = f"{dst_catalog}.{dst_schema}.fact_claims"
-gold_dim_member        = f"{dst_catalog}.{dst_schema}.dim_member"
-gold_dim_provider      = f"{dst_catalog}.{dst_schema}.dim_provider"
-gold_dim_pharmacy      = f"{dst_catalog}.{dst_schema}.dim_pharmacy"
-gold_dim_plan          = f"{dst_catalog}.{dst_schema}.dim_plan"
-
-gold_dim_diagnosis        = f"{dst_catalog}.{dst_schema}.dim_diagnosis"
-gold_dim_procedure        = f"{dst_catalog}.{dst_schema}.dim_procedure"
-gold_dim_revenue_codes        = f"{dst_catalog}.{dst_schema}.dim_revenue_codes"
-gold_dim_place_of_service        = f"{dst_catalog}.{dst_schema}.dim_place_of_service"
+gold_fact_claims          = f"{dst_catalog}.{dst_schema}.fact_claims"
+gold_dim_members          = f"{dst_catalog}.{dst_schema}.dim_members"
+gold_dim_providers        = f"{dst_catalog}.{dst_schema}.dim_providers"
+gold_dim_pharmacies       = f"{dst_catalog}.{dst_schema}.dim_pharmacies"
+gold_dim_plans            = f"{dst_catalog}.{dst_schema}.dim_plans"
+gold_dim_diagnosis_codes  = f"{dst_catalog}.{dst_schema}.dim_diagnosis_codes"
+gold_dim_procedures_codes = f"{dst_catalog}.{dst_schema}.dim_procedures_codes"
+gold_dim_revenue_codes    = f"{dst_catalog}.{dst_schema}.dim_revenue_codes"
+gold_dim_place_of_service = f"{dst_catalog}.{dst_schema}.dim_place_of_service"
 
 gold_dim_date          = f"{dst_catalog}.{dst_schema}.dim_date"
 
@@ -245,13 +244,6 @@ def record_dq(issue_type: str, table_name: str, record_count: int, details: str)
         .saveAsTable(dq_issues_table)
 )
 
-    # (df_issue.write
-    #       .format("delta")
-    #       .mode("append")
-    #       .option("overwriteSchema", "true")
-    #       .option("mergeSchema", "true"          
-    #       .saveAsTable(dq_issues_table)))
-
 
 def get_latest_silver_run_id(df_silver):
     if "silver_run_id" not in df_silver.columns or "silver_processed_timestamp" not in df_silver.columns:
@@ -277,6 +269,7 @@ if not spark.catalog.tableExists(silver_claims_table):
     raise ValueError(f"Silver claims table not found: {silver_claims_table}")
 
 df_claims_silver_all = spark.table(silver_claims_table)
+df_claims_silver_all = df_claims_silver_all.withColumnRenamed("place_of_service_std_id", "place_of_service_code")
 
 if process_silver_run_id == "latest":
     silver_run_id_to_process = get_latest_silver_run_id(df_claims_silver_all)
@@ -319,15 +312,6 @@ for c in ["units", "quantity", "days_supply"]:
         df = df.withColumn(f"{c}_imputed_flag", F.when(F.col(c).isNull(), F.lit(1)).otherwise(F.lit(0)))
         df = df.withColumn(c, F.coalesce(F.col(c), F.lit(0)))
 
-# Standard analytic date for trending
-# admission_date = F.coalesce(    
-#     F.col("admission_date") if "admission_date" in df.columns else F.lit(None).cast("date")#,
-#     # F.col("admission_date") if "admission_date" in df.columns else F.lit(None).cast("date"),
-#     # F.col("claim_date") if "claim_date" in df.columns else F.lit(None).cast("date"),
-#     # F.col("fill_date") if "fill_date" in df.columns else F.lit(None).cast("date")
-# )
-# df = df.withColumn("admission_date", admission_date)
-
 # Claim type flag
 if "claim_type" in df.columns:
     df = df.withColumn("is_rx_claim", F.when(F.upper(F.col("claim_type")).isin("RX","PHARMACY"), F.lit(1)).otherwise(F.lit(0)))
@@ -347,99 +331,87 @@ df = (df
 
 # COMMAND ----------
 
-if not spark.catalog.tableExists(silver_icd10_table):
-    raise ValueError(f"Silver claims table not found: {silver_icd10_table}")
-
-df_silver_icd10_table = spark.table(silver_icd10_table)
-df_silver_icd10_table = df_silver_icd10_table.toDF(*[c.lower() for c in df_silver_icd10_table.columns])
-
-if not spark.catalog.tableExists(silver_hcpcs_table):
-    raise ValueError(f"Silver claims table not found: {silver_hcpcs_table}")
-
-df_silver_hcpcs_table = spark.table(silver_hcpcs_table)
-df_silver_hcpcs_table = df_silver_hcpcs_table.toDF(*[c.lower() for c in df_silver_hcpcs_table.columns])
-
-if not spark.catalog.tableExists(silver_rev_table):
-    raise ValueError(f"Silver claims table not found: {silver_rev_table}")
-
-df_silver_rev_table = spark.table(silver_rev_table)
-df_silver_rev_table = df_silver_rev_table.toDF(*[c.lower() for c in df_silver_rev_table.columns])
-
-if not spark.catalog.tableExists(silver_pos_table):
-    raise ValueError(f"Silver claims table not found: {silver_pos_table}")
-
-df_silver_pos_table= spark.table(silver_pos_table)
-df_silver_pos_table = df_silver_pos_table.toDF(*[c.lower() for c in df_silver_pos_table.columns])
-
-# COMMAND ----------
-
 # Determine candidate columns based on available schema
-member_cols   = [c for c in ["member_id", "member_name", "member_dob", "member_gender","member_age"] if c in spark.table(silver_members_table).columns]
-provider_cols = [c for c in ["provider_id", "npi", "provider_specialty", "provider_state"] if c in spark.table(silver_providers_table).columns]
-pharm_cols    = [c for c in ["pharmacy_id", "pharmacy_name", "pharmacy_state"] if c in spark.table(silver_pharmacies_table).columns]
+member_cols         = [c for c in ["member_id", "member_name", "member_dob", "member_gender","member_age"] if c in spark.table(silver_members_table).columns]
+provider_cols       = [c for c in ["provider_id", "npi", "provider_specialty", "provider_state"] if c in spark.table(silver_providers_table).columns]
+pharm_cols          = [c for c in ["pharmacy_id", "pharmacy_name", "pharmacy_state"] if c in spark.table(silver_pharmacies_table).columns]
+plan_cols           = [c for c in ["plan_id", "plan_name","plan_state","payer_type"] if c in spark.table(silver_health_plans_table).columns]
+diagnosis_cols      = [c for c in ['DIAGNOSIS_CODE','SHORT_DESCRIPTION','LONG_DESCRIPTION'] if c in spark.table(silver_diagnosis_table).columns]
 
-plan_cols     = [c for c in ["plan_id", "plan_name","plan_state","payer_type"] if c in spark.table(silver_health_plans_table).columns]
+hcps_df = spark.table(silver_hcpcs_table)
+hcps_df = hcps_df.withColumnRenamed("hcpc", "procedure_code")
+hcpcs_icd10_cols      = [c for c in ['procedure_code', 'long_description', 'short_description',] if c in hcps_df.columns]
 
-diagnosis_cols   = [c for c in ["diagnosis_code"] if c in df.columns] 
-icd10_cols   = [c for c in ["procedure_code"] if c in df.columns]
-revenue_codes_cols   = [c for c in ["revenue_code"] if c in df.columns] 
-placeofservice_cols   = [c for c in ["place_of_service_std_id"] if c in df.columns]
+rev_df = spark.table(silver_rev_table)
+rev_df = rev_df.withColumnRenamed("CODE", "revenue_code")
+revenue_codes_cols  = [c for c in ['revenue_code','DESCRIPTION',] if c in spark.table(silver_rev_table).columns]
 
-def build_dim(id_col: str, cols: list, key_col: str, key_from: list, target_table: str):
+placeofservice_cols = [c for c in ['Place_of_Service_Code', 'Place_of_Service_Name', 'Place_of_Service_Description'] if c in spark.table(silver_pos_table).columns]
+
+def build_dim(source_df, id_col: str, cols: list, key_col: str, key_from: list, target_table: str):
+    if id_col not in str(source_df.columns).lower():
+        print(f"{id_col} not found; skipping {target_table}")
+    return 0
+
+def build_dim(source_df, id_col: str, cols: list, key_col: str, key_from: list, target_table: str):
     if id_col not in df.columns:
         print(f"{id_col} not found; skipping {target_table}")
         return 0
-    dim_df = (df.select(*cols)
+    dim_df = (source_df.select(*cols)
               .dropDuplicates([id_col])
               .withColumn(key_col, stable_key(*key_from))
               .withColumn("gold_run_id", F.lit(gold_run_id))
               .withColumn("gold_processed_timestamp", F.current_timestamp()))
     return write_delta(dim_df, target_table, mode=write_mode)
 
-
 t0 = datetime.now()
 try:
-    rw = build_dim("member_id", member_cols, "member_key", ["member_id"], gold_dim_member)
-    log_run(pipeline_name, layer, f"{silver_claims_table} (silver_run_id={silver_run_id_to_process})", gold_dim_member, "SUCCESS", t0, rows_claims_read, rw, 0)
+    mem_df = spark.table(silver_members_table)    
+    rw = build_dim(mem_df,"member_id"               , member_cols           , "member_key"          , ["member_id"]             , gold_dim_members)
+    log_run(pipeline_name, layer, f"{silver_claims_table} (silver_run_id={silver_run_id_to_process})", gold_dim_members, "SUCCESS", t0, rows_claims_read, rw, 0)
 except Exception as e:
-    log_run(pipeline_name, layer, silver_claims_table, gold_dim_member, "FAILED", t0, rows_claims_read, 0, 0, str(e)[:4000]); raise
+    log_run(pipeline_name, layer, silver_claims_table, gold_dim_members, "FAILED", t0, rows_claims_read, 0, 0, str(e)[:4000]); raise
 
 # Dim provider
 t0 = datetime.now()
 try:
-    rw = build_dim("provider_id", provider_cols, "provider_key", ["provider_id"], gold_dim_provider)
-    log_run(pipeline_name, layer, f"{silver_claims_table} (silver_run_id={silver_run_id_to_process})", gold_dim_provider, "SUCCESS", t0, rows_claims_read, rw, 0)
+    prov_df = spark.table(silver_providers_table)
+    rw = build_dim(prov_df,"provider_id", provider_cols, "provider_key", ["provider_id"], gold_dim_providers)
+    log_run(pipeline_name, layer, f"{silver_claims_table} (silver_run_id={silver_run_id_to_process})", gold_dim_providers, "SUCCESS", t0, rows_claims_read, rw, 0)
 except Exception as e:
-    log_run(pipeline_name, layer, silver_claims_table, gold_dim_provider, "FAILED", t0, rows_claims_read, 0, 0, str(e)[:4000]); raise
+    log_run(pipeline_name, layer, silver_claims_table, gold_dim_providers, "FAILED", t0, rows_claims_read, 0, 0, str(e)[:4000]); raise
 
 # Dim pharmacy
 t0 = datetime.now()
 try:
-    rw = build_dim("pharmacy_id", pharm_cols, "pharmacy_key", ["pharmacy_id"], gold_dim_pharmacy)
-    log_run(pipeline_name, layer, f"{silver_claims_table} (silver_run_id={silver_run_id_to_process})", gold_dim_pharmacy, "SUCCESS", t0, rows_claims_read, rw, 0)
+    phar_df = spark.table(silver_pharmacies_table)    
+    rw = build_dim(phar_df,"pharmacy_id", pharm_cols, "pharmacy_key", ["pharmacy_id"], gold_dim_pharmacies)
+    log_run(pipeline_name, layer, f"{silver_claims_table} (silver_run_id={silver_run_id_to_process})", gold_dim_pharmacies, "SUCCESS", t0, rows_claims_read, rw, 0)
 except Exception as e:
-    log_run(pipeline_name, layer, silver_claims_table, gold_dim_pharmacy, "FAILED", t0, rows_claims_read, 0, 0, str(e)[:4000]); raise
+    log_run(pipeline_name, layer, silver_claims_table, gold_dim_pharmacies, "FAILED", t0, rows_claims_read, 0, 0, str(e)[:4000]); raise
 
 # Dim Diagnosis 
 t0 = datetime.now()
 try:
-    rw = build_dim("diagnosis_code", diagnosis_cols, "diagnosis_key", ["diagnosis_code"], gold_dim_diagnosis)
-    log_run(pipeline_name, layer, f"{silver_claims_table} (silver_run_id={silver_run_id_to_process})", gold_dim_diagnosis, "SUCCESS", t0, rows_claims_read, rw, 0)
+    diag_df = spark.table(silver_diagnosis_table)
+    rw = build_dim(diag_df,"diagnosis_code", diagnosis_cols, "diagnosis_code_key", ["diagnosis_code"], gold_dim_diagnosis_codes)
+    log_run(pipeline_name, layer, f"{silver_claims_table} (silver_run_id={silver_run_id_to_process})", gold_dim_diagnosis_codes, "SUCCESS", t0, rows_claims_read, rw, 0)
 except Exception as e:
-    log_run(pipeline_name, layer, silver_claims_table, gold_dim_diagnosis, "FAILED", t0, rows_claims_read, 0, 0, str(e)[:4000]); raise
+    log_run(pipeline_name, layer, silver_claims_table, gold_dim_diagnosis_codes, "FAILED", t0, rows_claims_read, 0, 0, str(e)[:4000]); raise
 
 # Dim Procedure Codes
 t0 = datetime.now()
-try:
-    rw = build_dim("procedure_code", icd10_cols, "procedure_key", ["procedure_code"], gold_dim_procedure)
-    log_run(pipeline_name, layer, f"{silver_claims_table} (silver_run_id={silver_run_id_to_process})", gold_dim_procedure, "SUCCESS", t0, rows_claims_read, rw, 0)
+try:    
+    rw = build_dim(hcps_df,"procedure_code", hcpcs_icd10_cols, "procedure_code_key", ["procedure_code"], gold_dim_procedures_codes)
+    log_run(pipeline_name, layer, f"{silver_claims_table} (silver_run_id={silver_run_id_to_process})", gold_dim_procedures_codes, "SUCCESS", t0, rows_claims_read, rw, 0)
 except Exception as e:
-    log_run(pipeline_name, layer, silver_claims_table, gold_dim_procedure, "FAILED", t0, rows_claims_read, 0, 0, str(e)[:4000]); raise
+    log_run(pipeline_name, layer, silver_claims_table, gold_dim_procedures_codes, "FAILED", t0, rows_claims_read, 0, 0, str(e)[:4000]); raise
 
 # Dim Revenue Codes
+
 t0 = datetime.now()
-try:
-    rw = build_dim("revenue_code", revenue_codes_cols, "revenue_key", ["revenue_code"], gold_dim_revenue_codes)
+try:    
+    rw = build_dim(rev_df,"revenue_code", revenue_codes_cols, "revenue_code_key", ["revenue_code"],  gold_dim_revenue_codes)
     log_run(pipeline_name, layer, f"{silver_claims_table} (silver_run_id={silver_run_id_to_process})", gold_dim_revenue_codes, "SUCCESS", t0, rows_claims_read, rw, 0)
 except Exception as e:
     log_run(pipeline_name, layer, silver_claims_table, gold_dim_revenue_codes, "FAILED", t0, rows_claims_read, 0, 0, str(e)[:4000]); raise
@@ -447,24 +419,57 @@ except Exception as e:
 # Dim Place of Service
 t0 = datetime.now()
 try:
-    rw = build_dim("place_of_service_std_id", placeofservice_cols, "place_of_service_key", ["place_of_service_std_id"], gold_dim_place_of_service)
+    pos_df = spark.table(silver_pos_table)
+    rw = build_dim(pos_df,"place_of_service_code", placeofservice_cols, "place_of_service_key", ["place_of_service_code"],  gold_dim_place_of_service)
     log_run(pipeline_name, layer, f"{silver_claims_table} (silver_run_id={silver_run_id_to_process})", gold_dim_place_of_service, "SUCCESS", t0, rows_claims_read, rw, 0)
 except Exception as e:
     log_run(pipeline_name, layer, silver_claims_table, gold_dim_place_of_service, "FAILED", t0, rows_claims_read, 0, 0, str(e)[:4000]); raise
     
 # Dim plan
-
 t0 = datetime.now()
 try:
-    rw = build_dim("plan_id", plan_cols, "plan_key", ["plan_id"], gold_dim_plan)
-    log_run(pipeline_name, layer, f"{silver_claims_table} (silver_run_id={silver_run_id_to_process})", gold_dim_plan, "SUCCESS", t0, rows_claims_read, rw, 0)
+    plans_df = spark.table(silver_health_plans_table)    
+    rw = build_dim(plans_df,"plan_id",              plan_cols,              "plan_key",             ["plan_id"], gold_dim_plans)
+    log_run(pipeline_name, layer, f"{silver_claims_table} (silver_run_id={silver_run_id_to_process})", gold_dim_plans, "SUCCESS", t0, rows_claims_read, rw, 0)
 except Exception as e:
-    log_run(pipeline_name, layer, silver_claims_table, gold_dim_plan, "FAILED", t0, rows_claims_read, 0, 0, str(e)[:4000]); raise
+    log_run(pipeline_name, layer, silver_claims_table, gold_dim_plans, "FAILED", t0, rows_claims_read, 0, 0, str(e)[:4000]); raise
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 9) Build dim_date
+# MAGIC %md
+# MAGIC ## 9) Build Health Plan and Member relationship. A member must belong to a health plan.
+
+# COMMAND ----------
+
+dim_members_df = spark.table("gold_layer.healthcare_claims.dim_members")
+
+member_df = spark.table("gold_layer.healthcare_claims.dim_members").select("member_key").distinct().collect()
+plans_df = spark.table("gold_layer.healthcare_claims.dim_plans").select("plan_key").distinct().collect()
+
+import random
+
+# Extract member_keys and plan_keys
+member_keys = [row["member_key"] for row in member_df if row["member_key"] is not None]
+plan_keys = [row["plan_key"] for row in plans_df if row["plan_key"] is not None]
+
+if not plan_keys:
+    raise ValueError("No plan_key values found in plans_df.")
+
+# Assign a random plan_key to each member_key
+member_plan_pairs = [(member_key, random.choice(plan_keys)) for member_key in member_keys]
+
+# Create DataFrame with member_key and assigned plan_key
+df_member_plan = spark.createDataFrame(member_plan_pairs, ["member_key", "plan_key"])
+
+dim_members_df_final = dim_members_df.join(df_member_plan, "member_key", "inner")
+
+dim_members_df_final.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"{dst_catalog}.{dst_schema}.dim_members")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 10) Build dim_date
 
 # COMMAND ----------
 
@@ -505,7 +510,7 @@ except Exception as e:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 10) Build fact_claims (Grain + Measures + Keys)
+# MAGIC ## 11) Build fact_claims (Grain + Measures + Keys)
 
 # COMMAND ----------
 
@@ -531,13 +536,13 @@ try:
     if "pharmacy_id" in df_fact.columns:
         df_fact = df_fact.withColumn("pharmacy_key", stable_key("pharmacy_id"))    
     if "diagnosis_code" in df_fact.columns:
-        df_fact = df_fact.withColumn("diagnosis_key", stable_key("diagnosis_code"))
+        df_fact = df_fact.withColumn("diagnosis_code_key", stable_key("diagnosis_code"))
     if "procedure_code" in df_fact.columns:
-        df_fact = df_fact.withColumn("procedure_key", stable_key("procedure_code"))
+        df_fact = df_fact.withColumn("procedure_code_key", stable_key("procedure_code"))
     if "revenue_code" in df_fact.columns:
-        df_fact = df_fact.withColumn("revenue_key", stable_key("revenue_code"))
-    if "place_of_service_std_id" in df_fact.columns:
-        df_fact = df_fact.withColumn("place_of_service_key", stable_key("place_of_service_std_id"))
+        df_fact = df_fact.withColumn("revenue_code_key", stable_key("revenue_code"))
+    if "place_of_service_code" in df_fact.columns:
+        df_fact = df_fact.withColumn("place_of_service_key", stable_key("place_of_service_code"))
     
     plan_id_col = "health_plan_id" if "health_plan_id" in df_fact.columns else ("plan_id" if "plan_id" in df_fact.columns else None)
     if plan_id_col:
@@ -555,9 +560,8 @@ try:
     # Select columns for the fact table
     keep = [
         "claim_fact_key", "claim_id", "date_key", "admission_date",
-        "member_key", "provider_key", "pharmacy_key", "plan_key",'diagnosis_key', "procedure_key", "revenue_key","place_of_service_key",
-        "is_rx_claim"
-    ]
+        "member_key", "provider_key", "pharmacy_key", "plan_key",'diagnosis_code_key', "procedure_code_key", "revenue_code_key","place_of_service_key",
+        "is_rx_claim","claim_type","discharge_date" ]
 
     measures = ["paid_amount","allowed_amount","billed_amount","line_paid","line_allowed","line_charge","member_cost_share",
                 "units","quantity","days_supply"]
@@ -587,7 +591,7 @@ except Exception as e:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 11) Build Gold Marts (Aggregations for BI Performance)
+# MAGIC ## 12) Build Gold Marts (Aggregations for BI Performance)
 
 # COMMAND ----------
 
@@ -624,57 +628,93 @@ except Exception as e:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 12) Create Power BI Friendly Views
+# MAGIC ## 13) Create Power BI Friendly Views
 
 # COMMAND ----------
 
 # Create/replace an enriched view for convenience (optional)
 # This view joins Fact -> Dimensions where keys exist.
-spark.sql(f"""
-CREATE OR REPLACE VIEW {dst_catalog}.{dst_schema}.vw_fact_claims_enriched AS
+vw_fact_claims_enriched_df =spark.sql(f"""
 SELECT
-  f.*
-  ,m.member_id
---   ,m.member_state
-  ,m.member_gender
-  ,m.member_age
-  ,pr.provider_id
-  ,pr.provider_specialty  
-  ,ph.pharmacy_id
-  ,ph.pharmacy_name
- ,pl.plan_id
- ,pl.plan_name
- ,pl.plan_state
- ,pl.payer_type
-,d.diagnosis_code
+f.claim_fact_key
+,f.claim_id as encounter_id
+,f.date_key
+,f.admission_date
+,f.member_key
+,f.provider_key
+,f.pharmacy_key
+,f.plan_key
+,f.diagnosis_code_key
+,f.procedure_code_key
+,f.revenue_code_key
+,f.place_of_service_key
+,f.is_rx_claim
+,f.claim_type
+,f.discharge_date
+,f.line_allowed
+,f.line_charge
+,pl.plan_id
+,pl.plan_name
+,pl.plan_state
+,pl.payer_type
+,m.member_id
+,m.member_name
+,m.member_dob
+,m.member_gender
+,m.member_age
+,pr.provider_id
+,pr.npi as prescriber_npi
+,pr.provider_specialty
+,pr.provider_state
+,ph.pharmacy_id
+,ph.pharmacy_name
+,ph.pharmacy_state
+,d.DIAGNOSIS_CODE
+,d.SHORT_DESCRIPTION as DIAG_SHORT_DESCRIPTION
+,d.LONG_DESCRIPTION as DIAG_LONG_DESCRIPTION
 ,pc.procedure_code
+,pc.short_description as procedure_short_description
+,pc.long_description as  procedure_long_description
 ,rc.revenue_code
-,pos.place_of_service_std_id as place_of_service_code
+,rc.DESCRIPTION as revenue_description
+,pos.Place_of_Service_Code
+,pos.Place_of_Service_Name
+,pos.Place_of_Service_Description
+
 FROM {gold_fact_claims} f
-LEFT JOIN {gold_dim_member} m ON f.member_key = m.member_key
-LEFT JOIN {gold_dim_provider} pr ON f.provider_key = pr.provider_key
-left join {gold_dim_pharmacy} ph ON f.pharmacy_key = ph.pharmacy_key
-LEFT JOIN {gold_dim_plan} pl ON f.plan_key = pl.plan_key
-left join {gold_dim_diagnosis} d on f.diagnosis_key = d.diagnosis_key
-left join {gold_dim_procedure} pc on f.procedure_key = pc.procedure_key
-left JOIN {gold_dim_revenue_codes} rc on f.revenue_key = rc.revenue_key
+LEFT JOIN {gold_dim_plans} pl ON f.plan_key = pl.plan_key
+LEFT JOIN {gold_dim_members} m ON f.member_key = m.member_key
+LEFT JOIN {gold_dim_providers} pr ON f.provider_key = pr.provider_key
+left join {gold_dim_pharmacies} ph ON f.pharmacy_key = ph.pharmacy_key
+left join {gold_dim_diagnosis_codes} d on f.diagnosis_code_key = d.diagnosis_code_key
+left join {gold_dim_procedures_codes} pc on f.procedure_code_key = pc.procedure_code_key
+left JOIN {gold_dim_revenue_codes} rc on f.revenue_code_key = rc.revenue_code_key
 left join {gold_dim_place_of_service} pos on f.place_of_service_key = pos.place_of_service_key
 """)
+
+# Make all columns as proper case
+vw_fact_claims_enriched_df = vw_fact_claims_enriched_df.select([F.col(x).alias(x.upper()) for x in vw_fact_claims_enriched_df.columns])
+
+# vw_fact_claims_enriched_df.createOrReplaceGlobalTempView(f"{dst_catalog}.{dst_schema}.vw_fact_claims_enriched") 
+#[NOT_SUPPORTED_WITH_SERVERLESS] GLOBAL TEMPORARY VIEW is not supported on serverless compute. SQLSTATE: 0A000
+
+# If you want to persist the view as a table, uncomment the following line:
+vw_fact_claims_enriched_df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"{dst_catalog}.{dst_schema}.bi_fact_claims_enriched")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 13) Basic Validation + Latest Logs
+# MAGIC ## 14) Basic Validation + Latest Logs
 
 # COMMAND ----------
 
 tables = [
-    gold_dim_plan,
-    gold_dim_member,
-    gold_dim_provider,
-    gold_dim_pharmacy,        
-    gold_dim_diagnosis,
-    gold_dim_procedure,
+    gold_dim_plans,
+    gold_dim_members,
+    gold_dim_providers,
+    gold_dim_pharmacies,        
+    gold_dim_diagnosis_codes,
+    gold_dim_procedures_codes,
     gold_dim_revenue_codes,
     gold_dim_place_of_service,
     gold_dim_date,
